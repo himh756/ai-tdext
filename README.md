@@ -35,15 +35,28 @@ GitHub **托管 Runner**（最大 64 vCPU / 256 GB 内存，磁盘仅百 GB 级�
 
 ### 方式一：GitHub Actions 工作流（推荐）
 
-1. 在目标机器上注册自托管 Runner 并打标签（任选其一）：
+> **为什么必须用自托管 Runner**：BF16 权重约 772 GB（FP8 约 386 GB），
+> GitHub 托管 Runner 无 GPU、内存最大 256 GB、磁盘仅百 GB 级，**物理上无法运行本模型**。
+> 唯一能让工作流“在仓库侧跑起来”的方式：在您自己的 GPU 机器上注册自托管 Runner，
+> 工作流会在那台机器上自动完成下载、启动、测试、回收。
 
-   ```bash
-   # 仓库页 → Settings → Actions → Runners → New self-hosted runner，按指引执行，并添加标签：
-   ./config.sh --url https://github.com/himh756/ai-tdext --token <TOKEN> --labels glm-flash --unattended
-   # 或编辑 ~/actions-runner/.runner 后重启，确保标签为 self-hosted,linux,glm-flash
-   ```
+**第 1 步：注册自托管 Runner**（在您的 GPU 服务器上执行）
 
-2. 仓库页 → **Actions → Deploy GLM-5.3-Flash (BF16) → Run workflow**，按需填写输入：
+```bash
+# 1) 仓库页 → Settings → Actions → Runners → New self-hosted runner，复制官方提供的命令，例如：
+mkdir actions-runner && cd actions-runner
+curl -o actions-runner-linux-x64-2.311.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.311.0/actions-runner-linux-x64-2.311.0.tar.gz
+tar xzf actions-runner-linux-x64-2.311.0.tar.gz
+./config.sh --url https://github.com/himh756/ai-tdext --token <页面给的TOKEN> --labels glm-flash --unattended
+# 2) 以服务方式常驻运行
+sudo ./svc.sh install
+sudo ./svc.sh start
+# 3) 确认标签为 self-hosted,linux,glm-flash（Settings → Actions → Runners 页面可见）
+```
+
+**第 2 步：触发工作流**
+
+仓库页 → **Actions → Deploy GLM-5.3-Flash (BF16) → Run workflow**，按需填写输入：
 
    | 输入 | 默认 | 说明 |
    |------|------|------|
@@ -56,14 +69,38 @@ GitHub **托管 Runner**（最大 64 vCPU / 256 GB 内存，磁盘仅百 GB 级�
    | `port` | `8000` | 服务端口 |
    | `max_model_len` | `131072` | 最大上下文（1M 需极大 KV，按显存量力而行） |
    | `smoke_test` | `true` | 启动后是否执行推理冒烟测试 |
+   | `test_suite` | `true` | 运行完整测试套件（见下方说明） |
+   | `skip_tests` | 空 | 跳过的测试类别，逗号分隔（如 `long_context,multimodal`） |
    | `keep_alive_minutes` | `120` | 服务保活时长（分钟），到点回收 |
 
-3. 工作流自动完成：预检 → 下载（断点续传）→ 启动服务 → 冒烟测试 → 保活 → 回收并上传日志。
+3. 工作流自动完成：预检 → 下载（断点续传）→ 启动服务 → 冒烟测试 → **完整测试套件** → 保活 → 回收。
+   测试报告（含每条输入与模型输出）作为 Artifact `glm-flash-server-logs` 下载。
    服务为 OpenAI 兼容 API：`http://<runner-ip>:8000/v1/chat/completions`。
 
 > 为什么默认 `source=huggingface`：GitCode AI 社区对程序化下载限制较多（需登录态、WAF 限流）。
 > 同一份权重在 HuggingFace / ModelScope 有镜像，可用 CLI 断点续传；GitCode 手动下载通道见
 > [docs/download-sources.md](docs/download-sources.md)。
+
+### 测试套件（run_test_suite.py）
+
+对运行中的服务执行 8 类测试，**每条用例的输入内容与模型完整输出都会写入 Markdown 报告**：
+
+| 类别 | 内容 |
+|------|------|
+| `basic_chat` | 中英文基础问答 |
+| `reasoning_effort` | 思考预算 low/high/max 三档对比（GLM 专属） |
+| `multi_turn` | 多轮对话 + `clear_thinking` |
+| `tool_calling` | 工具调用（get_weather，验证 `--enable-auto-tool-choice`） |
+| `coding` | 代码生成（Python 快速排序） |
+| `long_context` | 长上下文召回（约 8K tokens 埋点） |
+| `multimodal` | 图像理解（GLM-5.3-Flash 原生多模态） |
+| `performance` | 3 轮短问答测 tok/s |
+
+```bash
+# 手动运行（服务起来后）
+BASE_URL=http://127.0.0.1:8000 MODEL=glm-5.3-flash python3 scripts/run_test_suite.py
+# 工作流中已自动执行，报告在 Artifacts 中下载（test-report.md）
+```
 
 ### 方式二：Docker Compose
 
@@ -117,7 +154,8 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 │   ├── download_gitcode.sh    # GitCode 通道（manifest 直链 + 登录态说明）
 │   ├── serve_vllm.sh          # vLLM 启动（glm47 解析器）
 │   ├── serve_sglang.sh        # SGLang 启动
-│   └── smoke_test.sh          # 健康检查 + 推理冒烟测试
+│   ├── smoke_test.sh          # 健康检查 + 推理冒烟测试
+│   └── run_test_suite.py      # 完整测试套件（输入/输出全记录 → Markdown 报告）
 ├── configs/                   # 环境变量样例（vllm / sglang）
 ├── docker/                    # Dockerfile + docker-compose
 └── docs/                      # 硬件需求、下载源说明

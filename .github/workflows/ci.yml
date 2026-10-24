@@ -36,5 +36,9 @@ jobs:
             bash -n "$f" && echo "OK: $f"
           done
 
+      - name: Python 语法校验
+        run: |
+          python3 -m py_compile scripts/run_test_suite.py && echo "OK: scripts/run_test_suite.py"
+
       - name: Dockerfile 存在性检查
         run: 'test -f docker/Dockerfile && echo "OK: docker/Dockerfile"'

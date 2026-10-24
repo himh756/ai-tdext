@@ -52,6 +52,14 @@ on:
         description: "启动后执行推理冒烟测试"
         type: boolean
         default: true
+      test_suite:
+        description: "运行完整测试套件（多轮/工具/编码/长上下文/多模态/性能，输入输出全记录）"
+        type: boolean
+        default: true
+      skip_tests:
+        description: "跳过的测试类别（逗号分隔，如 long_context,multimodal）"
+        type: string
+        default: ""
       keep_alive_minutes:
         description: "服务保活时长（分钟，0 = 测完即回收）"
         type: string
@@ -117,6 +125,21 @@ jobs:
         if: inputs.smoke_test
         run: bash scripts/smoke_test.sh
 
+      - name: 完整测试套件（输入/输出全部记录）
+        if: inputs.test_suite
+        env:
+          BASE_URL: http://127.0.0.1:${{ inputs.port }}
+          MODEL: glm-5.3-flash
+        run: |
+          SKIP="${{ inputs.skip_tests }}"
+          if [ -n "$SKIP" ]; then
+            python3 scripts/run_test_suite.py --out test-report.md --skip "$SKIP" || true
+          else
+            python3 scripts/run_test_suite.py --out test-report.md || true
+          fi
+          echo "==> 测试报告预览（前 80 行）:"
+          head -80 test-report.md || true
+
       - name: 服务保活
         if: inputs.keep_alive_minutes != '0'
         run: |
@@ -138,12 +161,13 @@ jobs:
             [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
           done
 
-      - name: 上传服务日志
+      - name: 上传服务日志与测试报告
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: glm-flash-server-logs
           path: |
             *.log
+            test-report.md
           if-no-files-found: warn
           retention-days: 7
