@@ -1,0 +1,35 @@
+# GLM-5.3-Flash-BF16 推理服务（vLLM）
+# 前置：权重已下载到 MODEL_ROOT（默认 ~/glm-models），GPU 可见
+#   bash scripts/download_model.sh
+# 启动：
+#   MODEL_ROOT=~/glm-models TENSOR_PARALLEL_SIZE=8 \
+#     docker compose -f docker/docker-compose.yml up -d
+
+services:
+  glm-5.3-flash:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: glm-5.3-flash:vllm
+    container_name: glm-5.3-flash
+    ipc: host
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      # 权重目录名规则：<owner>__<name>（scripts/download_model.sh 生成）
+      MODEL_PATH: /models/${MODEL_DIR_NAME:-zai-org__GLM-5.3-Flash-BF16}
+      TENSOR_PARALLEL_SIZE: "${TENSOR_PARALLEL_SIZE:-8}"
+      MAX_MODEL_LEN: "${MAX_MODEL_LEN:-131072}"
+      GPU_MEMORY_UTILIZATION: "${GPU_MEMORY_UTILIZATION:-0.92}"
+      SERVED_MODEL_NAME: glm-5.3-flash
+      EXTRA_ARGS: "${EXTRA_ARGS:-}"
+    volumes:
+      - ${MODEL_ROOT:-~/glm-models}:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

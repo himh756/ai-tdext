@@ -1,0 +1,149 @@
+# GLM-5.3-Flash-BF16 本地部署工作流
+#
+# 为什么用自托管 Runner：BF16 权重约 772 GB（FP8 约 386 GB），
+# GitHub 托管 Runner（最大 64 vCPU / 256 GB 内存、百 GB 级磁盘）无法承载，
+# 必须在目标 GPU 机器上注册 self-hosted Runner（标签: self-hosted,linux,glm-flash）。
+# 注册方式见 README.md「方式一」。
+name: Deploy GLM-5.3-Flash (BF16)
+
+on:
+  workflow_dispatch:
+    inputs:
+      framework:
+        description: "推理框架"
+        type: choice
+        options: [vllm, sglang]
+        default: vllm
+      precision:
+        description: "权重精度"
+        type: choice
+        options: [bf16, fp8]
+        default: bf16
+      source:
+        description: "权重来源"
+        type: choice
+        options: [huggingface, modelscope, gitcode, local]
+        default: huggingface
+      model_id:
+        description: "模型 ID（留空则按精度自动选择）"
+        type: string
+        default: ""
+      hf_endpoint:
+        description: "HuggingFace 端点（国内加速用 hf-mirror.com）"
+        type: string
+        default: "https://hf-mirror.com"
+      tensor_parallel_size:
+        description: "张量并行 GPU 数"
+        type: string
+        default: "8"
+      port:
+        description: "服务端口"
+        type: string
+        default: "8000"
+      max_model_len:
+        description: "最大上下文 tokens（按显存量力而行）"
+        type: string
+        default: "131072"
+      gpu_memory_utilization:
+        description: "显存占用上限比例"
+        type: string
+        default: "0.92"
+      smoke_test:
+        description: "启动后执行推理冒烟测试"
+        type: boolean
+        default: true
+      keep_alive_minutes:
+        description: "服务保活时长（分钟，0 = 测完即回收）"
+        type: string
+        default: "120"
+
+# 同一时刻只允许一个部署任务，避免抢占 GPU
+concurrency:
+  group: glm-flash-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, glm-flash]
+    timeout-minutes: 10080 # 7 天，支持长时保活
+    env:
+      FRAMEWORK: ${{ inputs.framework }}
+      PRECISION: ${{ inputs.precision }}
+      SOURCE: ${{ inputs.source }}
+      MODEL_ROOT: ${{ github.workspace }}/../glm-models
+      TENSOR_PARALLEL_SIZE: ${{ inputs.tensor_parallel_size }}
+      PORT: ${{ inputs.port }}
+      MAX_MODEL_LEN: ${{ inputs.max_model_len }}
+      GPU_MEMORY_UTILIZATION: ${{ inputs.gpu_memory_utilization }}
+      SERVED_MODEL_NAME: glm-5.3-flash
+      HF_ENDPOINT: ${{ inputs.hf_endpoint }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GITCODE_COOKIE: ${{ secrets.GITCODE_COOKIE }}
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 解析模型 ID
+        id: model
+        run: |
+          if [ -n "${{ inputs.model_id }}" ]; then
+            MODEL_ID="${{ inputs.model_id }}"
+          else
+            case "$PRECISION" in
+              bf16) MODEL_ID="zai-org/GLM-5.3-Flash-BF16" ;;
+              fp8)  MODEL_ID="zai-org/GLM-5.3-Flash" ;;
+              *)    echo "::error::未知精度 $PRECISION"; exit 2 ;;
+            esac
+          fi
+          echo "MODEL_ID=$MODEL_ID" >> "$GITHUB_ENV"
+          echo "==> 模型: $MODEL_ID (精度 $PRECISION, 来源 $SOURCE)"
+
+      - name: 硬件与磁盘预检
+        run: bash scripts/precheck.sh
+
+      - name: 下载模型权重（断点续传）
+        run: bash scripts/download_model.sh
+
+      - name: 启动推理服务 (vLLM)
+        if: inputs.framework == 'vllm'
+        run: bash scripts/serve_vllm.sh
+
+      - name: 启动推理服务 (SGLang)
+        if: inputs.framework == 'sglang'
+        run: bash scripts/serve_sglang.sh
+
+      - name: 冒烟测试
+        if: inputs.smoke_test
+        run: bash scripts/smoke_test.sh
+
+      - name: 服务保活
+        if: inputs.keep_alive_minutes != '0'
+        run: |
+          END=$(( $(date +%s) + ${{ inputs.keep_alive_minutes }} * 60 ))
+          echo "==> 服务保活至 $(date -d @$END '+%F %T')，API: http://<runner-ip>:${PORT}/v1"
+          while [ "$(date +%s)" -lt "$END" ]; do
+            if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+              echo "[$(date '+%F %T')] healthy"
+            else
+              echo "::warning::[$(date '+%F %T')] 健康检查失败"
+            fi
+            sleep 60
+          done
+
+      - name: 停止服务并收集日志
+        if: always()
+        run: |
+          for f in vllm-server.pid sglang-server.pid; do
+            [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
+          done
+
+      - name: 上传服务日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: glm-flash-server-logs
+          path: |
+            *.log
+          if-no-files-found: warn
+          retention-days: 7

@@ -1,0 +1,13 @@
+# 本地临时文件
+*.log
+*.pid
+
+# GitCode 直链清单（含时效签名，勿提交）
+gitcode-urls.txt
+
+# 权重目录（如误放在仓库内）
+models/
+
+# Python
+__pycache__/
+*.pyc
