@@ -1,0 +1,26 @@
+{
+  "name": "ai-tdext · GLM 部署与测试环境",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "hostRequirements": {
+    "cpus": 8,
+    "memory": "16gb",
+    "storage": "32gb"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "github.vscode-github-actions"
+      ]
+    }
+  },
+  "postCreateCommand": "pip install --quiet 'huggingface_hub[hf_transfer]' modelscope llama-cpp-python && echo '==> 环境就绪。小模型可跑；GLM-5.3-Flash 本体需要 GPU 机器（见 docs/hardware.md）'",
+  "remoteEnv": {
+    "HF_HUB_ENABLE_HF_TRANSFER": "1",
+    "HF_ENDPOINT": "https://hf-mirror.com"
+  },
+  "forwardPorts": [8000],
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  }
+}

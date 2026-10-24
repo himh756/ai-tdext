@@ -28,13 +28,15 @@
 - **华为昇腾**：950PR 8×128GB（vLLM Ascend，单节点 TP=8，FP8）。
 - **CPU offload**：KTransformers 可将专家权重 offload 到内存/SSD，速度大幅下降，仅适合体验。
 
-## GitHub Runner 限制（重要）
+## GitHub Runner / Codespaces 限制（重要）
 
-| Runner | vCPU | 内存 | 磁盘 | 能否跑 BF16 |
-|--------|------|------|------|-------------|
-| GitHub 托管 standard | 4 | 16 GB | ~14 GB SSD | ❌ |
-| GitHub 托管 larger（最大） | 64 | 256 GB | 百 GB 级 | ❌ |
+| 环境 | vCPU | 内存 | 磁盘 | GPU | 能否跑 BF16 |
+|------|------|------|------|-----|-------------|
+| GitHub 托管 Runner（最大） | 64 | 256 GB | 百 GB 级 | 无 | ❌ |
+| Codespaces（最大） | 32 | 128 GB | 128 GB | 无（仅弱 GPU 档） | ❌ 差一个数量级 |
+| 自托管 Runner（你的 GPU 机） | 任意 | 任意 | 任意 | 8×H200 等 | ✅ |
 
+Codespaces 适合跑 7B–32B 小模型验证流水线，详见 [codespaces.md](codespaces.md)。
 因此 `.github/workflows/deploy-glm-flash.yml` 固定使用 **自托管 Runner**
 （标签 `self-hosted,linux,glm-flash`）。注册步骤见 README「方式一」。
 自托管 Runner 机器即"本地"，工作流在其上执行下载、启动、测试、保活与回收。

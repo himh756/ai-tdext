@@ -163,6 +163,7 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 ## 常见问题
 
+- **Codespaces（代码空间）能跑吗？** 跑不了 GLM-5.3-Flash 本体：Codespaces 最大 32 核/128GB 内存/128GB 磁盘、无大显存 GPU，而 BF16 权重就要 772GB——差一个数量级。但可跑 7B–32B 小模型验证整套流水线，详见 [docs/codespaces.md](docs/codespaces.md)（仓库已内置 devcontainer）。
 - **显存不够**：BF16 需 ~772GB 权重。降级顺序：BF16 → FP8（386GB）→ NVFP4（229GB，需 Blackwell）；
   或缩短 `max_model_len` 降低 KV 占用；或用 KTransformers 做 CPU offload（速度大幅下降）。
 - **下载慢/失败**：国内用 `hf_endpoint=https://hf-mirror.com` 或 `source=modelscope`；
